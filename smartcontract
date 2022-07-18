@@ -1,184 +1,194 @@
-package chaincode_test
+package chaincode
 
 import (
 	"encoding/json"
 	"fmt"
-	"testing"
 
-	"github.com/hyperledger/fabric-chaincode-go/shim"
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
-	"github.com/hyperledger/fabric-protos-go/ledger/queryresult"
-	"github.com/hyperledger/fabric-samples/asset-transfer-basic/chaincode-go/chaincode"
-	"github.com/hyperledger/fabric-samples/asset-transfer-basic/chaincode-go/chaincode/mocks"
-	"github.com/stretchr/testify/require"
 )
 
-//go:generate counterfeiter -o mocks/transaction.go -fake-name TransactionContext . transactionContext
-type transactionContext interface {
-	contractapi.TransactionContextInterface
+// SmartContract provides functions for managing an Asset
+type SmartContract struct {
+	contractapi.Contract
 }
 
-//go:generate counterfeiter -o mocks/chaincodestub.go -fake-name ChaincodeStub . chaincodeStub
-type chaincodeStub interface {
-	shim.ChaincodeStubInterface
+// Asset describes basic details of what makes up a simple asset
+//Insert struct field in alphabetic order => to achieve determinism across languages
+// golang keeps the order when marshal to json but doesn't order automatically
+type Asset struct {
+	AppraisedValue int    `json:"AppraisedValue"`
+	Color          string `json:"Color"`
+	ID             string `json:"ID"`
+	Owner          string `json:"Owner"`
+	Size           int    `json:"Size"`
 }
 
-//go:generate counterfeiter -o mocks/statequeryiterator.go -fake-name StateQueryIterator . stateQueryIterator
-type stateQueryIterator interface {
-	shim.StateQueryIteratorInterface
+// InitLedger adds a base set of assets to the ledger
+func (s *SmartContract) InitLedger(ctx contractapi.TransactionContextInterface) error {
+	assets := []Asset{
+		{ID: "asset1", Color: "blue", Size: 5, Owner: "Tomoko", AppraisedValue: 300},
+		{ID: "asset2", Color: "red", Size: 5, Owner: "Brad", AppraisedValue: 400},
+		{ID: "asset3", Color: "green", Size: 10, Owner: "Jin Soo", AppraisedValue: 500},
+		{ID: "asset4", Color: "yellow", Size: 10, Owner: "Max", AppraisedValue: 600},
+		{ID: "asset5", Color: "black", Size: 15, Owner: "Adriana", AppraisedValue: 700},
+		{ID: "asset6", Color: "white", Size: 15, Owner: "Michel", AppraisedValue: 800},
+	}
+
+	for _, asset := range assets {
+		assetJSON, err := json.Marshal(asset)
+		if err != nil {
+			return err
+		}
+
+		err = ctx.GetStub().PutState(asset.ID, assetJSON)
+		if err != nil {
+			return fmt.Errorf("failed to put to world state. %v", err)
+		}
+	}
+
+	return nil
 }
 
-func TestInitLedger(t *testing.T) {
-	chaincodeStub := &mocks.ChaincodeStub{}
-	transactionContext := &mocks.TransactionContext{}
-	transactionContext.GetStubReturns(chaincodeStub)
+// CreateAsset issues a new asset to the world state with given details.
+func (s *SmartContract) CreateAsset(ctx contractapi.TransactionContextInterface, id string, color string, size int, owner string, appraisedValue int) error {
+	exists, err := s.AssetExists(ctx, id)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return fmt.Errorf("the asset %s already exists", id)
+	}
 
-	assetTransfer := chaincode.SmartContract{}
-	err := assetTransfer.InitLedger(transactionContext)
-	require.NoError(t, err)
+	asset := Asset{
+		ID:             id,
+		Color:          color,
+		Size:           size,
+		Owner:          owner,
+		AppraisedValue: appraisedValue,
+	}
+	assetJSON, err := json.Marshal(asset)
+	if err != nil {
+		return err
+	}
 
-	chaincodeStub.PutStateReturns(fmt.Errorf("failed inserting key"))
-	err = assetTransfer.InitLedger(transactionContext)
-	require.EqualError(t, err, "failed to put to world state. failed inserting key")
+	return ctx.GetStub().PutState(id, assetJSON)
 }
 
-func TestCreateAsset(t *testing.T) {
-	chaincodeStub := &mocks.ChaincodeStub{}
-	transactionContext := &mocks.TransactionContext{}
-	transactionContext.GetStubReturns(chaincodeStub)
+// ReadAsset returns the asset stored in the world state with given id.
+func (s *SmartContract) ReadAsset(ctx contractapi.TransactionContextInterface, id string) (*Asset, error) {
+	assetJSON, err := ctx.GetStub().GetState(id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read from world state: %v", err)
+	}
+	if assetJSON == nil {
+		return nil, fmt.Errorf("the asset %s does not exist", id)
+	}
 
-	assetTransfer := chaincode.SmartContract{}
-	err := assetTransfer.CreateAsset(transactionContext, "", "", 0, "", 0)
-	require.NoError(t, err)
+	var asset Asset
+	err = json.Unmarshal(assetJSON, &asset)
+	if err != nil {
+		return nil, err
+	}
 
-	chaincodeStub.GetStateReturns([]byte{}, nil)
-	err = assetTransfer.CreateAsset(transactionContext, "asset1", "", 0, "", 0)
-	require.EqualError(t, err, "the asset asset1 already exists")
-
-	chaincodeStub.GetStateReturns(nil, fmt.Errorf("unable to retrieve asset"))
-	err = assetTransfer.CreateAsset(transactionContext, "asset1", "", 0, "", 0)
-	require.EqualError(t, err, "failed to read from world state: unable to retrieve asset")
+	return &asset, nil
 }
 
-func TestReadAsset(t *testing.T) {
-	chaincodeStub := &mocks.ChaincodeStub{}
-	transactionContext := &mocks.TransactionContext{}
-	transactionContext.GetStubReturns(chaincodeStub)
+// UpdateAsset updates an existing asset in the world state with provided parameters.
+func (s *SmartContract) UpdateAsset(ctx contractapi.TransactionContextInterface, id string, color string, size int, owner string, appraisedValue int) error {
+	exists, err := s.AssetExists(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("the asset %s does not exist", id)
+	}
 
-	expectedAsset := &chaincode.Asset{ID: "asset1"}
-	bytes, err := json.Marshal(expectedAsset)
-	require.NoError(t, err)
+	// overwriting original asset with new asset
+	asset := Asset{
+		ID:             id,
+		Color:          color,
+		Size:           size,
+		Owner:          owner,
+		AppraisedValue: appraisedValue,
+	}
+	assetJSON, err := json.Marshal(asset)
+	if err != nil {
+		return err
+	}
 
-	chaincodeStub.GetStateReturns(bytes, nil)
-	assetTransfer := chaincode.SmartContract{}
-	asset, err := assetTransfer.ReadAsset(transactionContext, "")
-	require.NoError(t, err)
-	require.Equal(t, expectedAsset, asset)
-
-	chaincodeStub.GetStateReturns(nil, fmt.Errorf("unable to retrieve asset"))
-	_, err = assetTransfer.ReadAsset(transactionContext, "")
-	require.EqualError(t, err, "failed to read from world state: unable to retrieve asset")
-
-	chaincodeStub.GetStateReturns(nil, nil)
-	asset, err = assetTransfer.ReadAsset(transactionContext, "asset1")
-	require.EqualError(t, err, "the asset asset1 does not exist")
-	require.Nil(t, asset)
+	return ctx.GetStub().PutState(id, assetJSON)
 }
 
-func TestUpdateAsset(t *testing.T) {
-	chaincodeStub := &mocks.ChaincodeStub{}
-	transactionContext := &mocks.TransactionContext{}
-	transactionContext.GetStubReturns(chaincodeStub)
+// DeleteAsset deletes an given asset from the world state.
+func (s *SmartContract) DeleteAsset(ctx contractapi.TransactionContextInterface, id string) error {
+	exists, err := s.AssetExists(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("the asset %s does not exist", id)
+	}
 
-	expectedAsset := &chaincode.Asset{ID: "asset1"}
-	bytes, err := json.Marshal(expectedAsset)
-	require.NoError(t, err)
-
-	chaincodeStub.GetStateReturns(bytes, nil)
-	assetTransfer := chaincode.SmartContract{}
-	err = assetTransfer.UpdateAsset(transactionContext, "", "", 0, "", 0)
-	require.NoError(t, err)
-
-	chaincodeStub.GetStateReturns(nil, nil)
-	err = assetTransfer.UpdateAsset(transactionContext, "asset1", "", 0, "", 0)
-	require.EqualError(t, err, "the asset asset1 does not exist")
-
-	chaincodeStub.GetStateReturns(nil, fmt.Errorf("unable to retrieve asset"))
-	err = assetTransfer.UpdateAsset(transactionContext, "asset1", "", 0, "", 0)
-	require.EqualError(t, err, "failed to read from world state: unable to retrieve asset")
+	return ctx.GetStub().DelState(id)
 }
 
-func TestDeleteAsset(t *testing.T) {
-	chaincodeStub := &mocks.ChaincodeStub{}
-	transactionContext := &mocks.TransactionContext{}
-	transactionContext.GetStubReturns(chaincodeStub)
+// AssetExists returns true when asset with given ID exists in world state
+func (s *SmartContract) AssetExists(ctx contractapi.TransactionContextInterface, id string) (bool, error) {
+	assetJSON, err := ctx.GetStub().GetState(id)
+	if err != nil {
+		return false, fmt.Errorf("failed to read from world state: %v", err)
+	}
 
-	asset := &chaincode.Asset{ID: "asset1"}
-	bytes, err := json.Marshal(asset)
-	require.NoError(t, err)
-
-	chaincodeStub.GetStateReturns(bytes, nil)
-	chaincodeStub.DelStateReturns(nil)
-	assetTransfer := chaincode.SmartContract{}
-	err = assetTransfer.DeleteAsset(transactionContext, "")
-	require.NoError(t, err)
-
-	chaincodeStub.GetStateReturns(nil, nil)
-	err = assetTransfer.DeleteAsset(transactionContext, "asset1")
-	require.EqualError(t, err, "the asset asset1 does not exist")
-
-	chaincodeStub.GetStateReturns(nil, fmt.Errorf("unable to retrieve asset"))
-	err = assetTransfer.DeleteAsset(transactionContext, "")
-	require.EqualError(t, err, "failed to read from world state: unable to retrieve asset")
+	return assetJSON != nil, nil
 }
 
-func TestTransferAsset(t *testing.T) {
-	chaincodeStub := &mocks.ChaincodeStub{}
-	transactionContext := &mocks.TransactionContext{}
-	transactionContext.GetStubReturns(chaincodeStub)
+// TransferAsset updates the owner field of asset with given id in world state, and returns the old owner.
+func (s *SmartContract) TransferAsset(ctx contractapi.TransactionContextInterface, id string, newOwner string) (string, error) {
+	asset, err := s.ReadAsset(ctx, id)
+	if err != nil {
+		return "", err
+	}
 
-	asset := &chaincode.Asset{ID: "asset1"}
-	bytes, err := json.Marshal(asset)
-	require.NoError(t, err)
+	oldOwner := asset.Owner
+	asset.Owner = newOwner
 
-	chaincodeStub.GetStateReturns(bytes, nil)
-	assetTransfer := chaincode.SmartContract{}
-	_, err = assetTransfer.TransferAsset(transactionContext, "", "")
-	require.NoError(t, err)
+	assetJSON, err := json.Marshal(asset)
+	if err != nil {
+		return "", err
+	}
 
-	chaincodeStub.GetStateReturns(nil, fmt.Errorf("unable to retrieve asset"))
-	_, err = assetTransfer.TransferAsset(transactionContext, "", "")
-	require.EqualError(t, err, "failed to read from world state: unable to retrieve asset")
+	err = ctx.GetStub().PutState(id, assetJSON)
+	if err != nil {
+		return "", err
+	}
+
+	return oldOwner, nil
 }
 
-func TestGetAllAssets(t *testing.T) {
-	asset := &chaincode.Asset{ID: "asset1"}
-	bytes, err := json.Marshal(asset)
-	require.NoError(t, err)
+// GetAllAssets returns all assets found in world state
+func (s *SmartContract) GetAllAssets(ctx contractapi.TransactionContextInterface) ([]*Asset, error) {
+	// range query with empty string for startKey and endKey does an
+	// open-ended query of all assets in the chaincode namespace.
+	resultsIterator, err := ctx.GetStub().GetStateByRange("", "")
+	if err != nil {
+		return nil, err
+	}
+	defer resultsIterator.Close()
 
-	iterator := &mocks.StateQueryIterator{}
-	iterator.HasNextReturnsOnCall(0, true)
-	iterator.HasNextReturnsOnCall(1, false)
-	iterator.NextReturns(&queryresult.KV{Value: bytes}, nil)
+	var assets []*Asset
+	for resultsIterator.HasNext() {
+		queryResponse, err := resultsIterator.Next()
+		if err != nil {
+			return nil, err
+		}
 
-	chaincodeStub := &mocks.ChaincodeStub{}
-	transactionContext := &mocks.TransactionContext{}
-	transactionContext.GetStubReturns(chaincodeStub)
+		var asset Asset
+		err = json.Unmarshal(queryResponse.Value, &asset)
+		if err != nil {
+			return nil, err
+		}
+		assets = append(assets, &asset)
+	}
 
-	chaincodeStub.GetStateByRangeReturns(iterator, nil)
-	assetTransfer := &chaincode.SmartContract{}
-	assets, err := assetTransfer.GetAllAssets(transactionContext)
-	require.NoError(t, err)
-	require.Equal(t, []*chaincode.Asset{asset}, assets)
-
-	iterator.HasNextReturns(true)
-	iterator.NextReturns(nil, fmt.Errorf("failed retrieving next item"))
-	assets, err = assetTransfer.GetAllAssets(transactionContext)
-	require.EqualError(t, err, "failed retrieving next item")
-	require.Nil(t, assets)
-
-	chaincodeStub.GetStateByRangeReturns(nil, fmt.Errorf("failed retrieving all assets"))
-	assets, err = assetTransfer.GetAllAssets(transactionContext)
-	require.EqualError(t, err, "failed retrieving all assets")
-	require.Nil(t, assets)
+	return assets, nil
 }
