@@ -1,4 +1,4 @@
-package chaincode
+package library
 
 import (
 	"encoding/json"
@@ -19,6 +19,7 @@ type Library struct {
 	ID       string `json:"ID"`
 	Owner    string `json:"Owner"`
 	Quantity int    `json:"Quantity"`
+	publish bool
 }
 
 // InitLedger adds a base set of assets to the ledger
@@ -48,13 +49,13 @@ func (s *SmartContract) InitLedger(ctx contractapi.TransactionContextInterface) 
 }
 
 // CreateAsset issues a new asset to the world state with given details.
-func (s *SmartContract) CreateLibrary(ctx contractapi.TransactionContextInterface, id string,  quantity int, owner string) error {
+func (s *SmartContract) CreateLibrary(ctx contractapi.TransactionContextInterface, id string, quantity int, owner string) error {
 	exists, err := s.LibraryExists(ctx, id)
 	if err != nil {
 		return err
 	}
 	if exists {
-		return fmt.Errorf("the library %s already exists", id)
+		return fmt.Errorf("the book %s already exists", id)
 	}
 
 	library := Library{
@@ -77,7 +78,7 @@ func (s *SmartContract) ReadAsset(ctx contractapi.TransactionContextInterface, i
 		return nil, fmt.Errorf("failed to read from world state: %v", err)
 	}
 	if libraryJSON == nil {
-		return nil, fmt.Errorf("the asset %s does not exist", id)
+		return nil, fmt.Errorf("the book %s does not exist", id)
 	}
 
 	var library Library
@@ -90,13 +91,13 @@ func (s *SmartContract) ReadAsset(ctx contractapi.TransactionContextInterface, i
 }
 
 // UpdateAsset updates an existing asset in the world state with provided parameters.
-func (s *SmartContract) UpdateAsset(ctx contractapi.TransactionContextInterface, id string,  quantity int, owner string) error {
+func (s *SmartContract) UpdateAsset(ctx contractapi.TransactionContextInterface, id string, quantity int, owner string) error {
 	exists, err := s.LibraryExists(ctx, id)
 	if err != nil {
 		return err
 	}
 	if !exists {
-		return fmt.Errorf("the library %s does not exist", id)
+		return fmt.Errorf("the book %s does not exist", id)
 	}
 
 	// overwriting original asset with new asset
@@ -137,7 +138,7 @@ func (s *SmartContract) LibraryExists(ctx contractapi.TransactionContextInterfac
 }
 
 // TransferAsset updates the owner field of asset with given id in world state, and returns the old owner.
-func (s *SmartContract) TransferAsset(ctx contractapi.TransactionContextInterface, id string, newOwner string) (string, error) {
+func (s *SmartContract) TransferLibrary(ctx contractapi.TransactionContextInterface, id string, newOwner string) (string, error) {
 	asset, err := s.ReadAsset(ctx, id)
 	if err != nil {
 		return "", err
@@ -160,7 +161,7 @@ func (s *SmartContract) TransferAsset(ctx contractapi.TransactionContextInterfac
 }
 
 // GetAllAssets returns all assets found in world state
-func (s *SmartContract) GetAllAssets(ctx contractapi.TransactionContextInterface) ([]*Library, error) {
+func (s *SmartContract) GetAllBook(ctx contractapi.TransactionContextInterface) ([]*Library, error) {
 	// range query with empty string for startKey and endKey does an
 	// open-ended query of all assets in the chaincode namespace.
 	resultsIterator, err := ctx.GetStub().GetStateByRange("", "")
