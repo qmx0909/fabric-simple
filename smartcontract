@@ -19,7 +19,6 @@ type Library struct {
 	ID       string `json:"ID"`
 	Owner    string `json:"Owner"`
 	Quantity int    `json:"Quantity"`
-	publish bool
 }
 
 // InitLedger adds a base set of assets to the ledger
